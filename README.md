@@ -4,6 +4,22 @@ This is a custom component for ESPHome that allows you to control Broadlink Fast
 
 Be warned - there is also a brLight app, which might look like brMesh, but the protocol is different.
 
+## ⚡ Optimized Branch
+
+**This fork includes command optimization** that reduces BLE command spam by 66%!
+
+The `optimized` branch adds:
+- **Command deduplication** - Skips identical consecutive commands
+- **Debouncing (100ms)** - Waits for state changes to settle before sending
+- **Minimum interval (300ms)** - Prevents flooding the BLE queue
+
+**Performance improvement:**
+- Turning off 3 lights: 9 commands → **3 commands** ✅
+- Brightness slider: 10+ commands → **1-2 commands** ✅
+- Color changes: 2-3 commands → **1 command** ✅
+
+See the [OPTIMIZATION.md](OPTIMIZATION.md) file for technical details.
+
 ## Requirements
 
 - ESP32 board
@@ -15,6 +31,7 @@ Be warned - there is also a brLight app, which might look like brMesh, but the p
 - Brightness control
 - RGB color control
 - White mode
+- **Command optimization** (optimized branch only)
 
 ## Configuration
 
@@ -31,8 +48,13 @@ esp32_ble_tracker:
 esp32_ble_server:
 
 # Source configuration
+# Use optimized branch for 66% fewer BLE commands:
 external_components:
-  - source: github://dennispg/esphome-fastcon@main
+  - source: github://tofuweasel/esphome-fastcon@optimized
+    components: [fastcon]
+
+# Or use original:
+# - source: github://dennispg/esphome-fastcon@main
 
 # Controller configuration
 fastcon:
