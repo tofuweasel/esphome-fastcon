@@ -1,6 +1,6 @@
 #include <algorithm>
 #include "esphome/core/log.h"
-#include "fastcon_light_optimized.h"
+#include "fastcon_light.h"
 #include "fastcon_controller.h"
 #include "utils.h"
 
