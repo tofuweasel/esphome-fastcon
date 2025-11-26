@@ -20,6 +20,17 @@ The `optimized` branch adds:
 
 See the [OPTIMIZATION.md](OPTIMIZATION.md) file for technical details.
 
+### 🔗 Companion Home Assistant Addon
+
+This fork is designed to work seamlessly with the **[BRMesh Bridge Home Assistant Addon](https://github.com/tofuweasel/ha-brmesh-bridge)**, which:
+- Auto-generates ESPHome configs using the optimized fork
+- Provides web UI for light management
+- Supports native pairing (no phone app needed)
+- Includes scene and effect management
+- Offers multi-controller mesh support
+
+**Installation:** Add `https://github.com/tofuweasel/ha-brmesh-bridge` to your Home Assistant addon repositories.
+
 ## Requirements
 
 - ESP32 board
