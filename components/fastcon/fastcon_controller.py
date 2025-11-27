@@ -2,6 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
 from esphome.core import HexInt
+from esphome import automation
 
 DEPENDENCIES = ["esp32_ble"]
 
@@ -76,3 +77,48 @@ async def to_code(config):
     cg.add(var.set_adv_duration(config[CONF_ADV_DURATION]))
     cg.add(var.set_adv_gap(config[CONF_ADV_GAP]))
     cg.add(var.set_max_queue_size(config[CONF_MAX_QUEUE_SIZE]))
+
+
+# Actions for pairing
+PairDeviceAction = fastcon_ns.class_("PairDeviceAction", automation.Action)
+FactoryResetAction = fastcon_ns.class_("FactoryResetAction", automation.Action)
+
+
+@automation.register_action(
+    "fastcon.pair_device",
+    PairDeviceAction,
+    cv.Schema({
+        cv.GenerateID(): cv.use_id(FastconController),
+        cv.Required("light_id"): cv.templatable(cv.positive_int),
+        cv.Optional("group_id", default=1): cv.templatable(cv.positive_int),
+    })
+)
+async def fastcon_pair_device_to_code(config, action_id, template_arg, args):
+    var = await cg.get_variable(config[CONF_ID])
+    action = cg.new_Pvariable(action_id, template_arg, var)
+    
+    template_ = await cg.templatable(config["light_id"], args, cg.uint32)
+    cg.add(action.set_light_id(template_))
+    
+    template_ = await cg.templatable(config["group_id"], args, cg.uint32)
+    cg.add(action.set_group_id(template_))
+    
+    return action
+
+
+@automation.register_action(
+    "fastcon.factory_reset",
+    FactoryResetAction,
+    cv.Schema({
+        cv.GenerateID(): cv.use_id(FastconController),
+        cv.Required("light_id"): cv.templatable(cv.positive_int),
+    })
+)
+async def fastcon_factory_reset_to_code(config, action_id, template_arg, args):
+    var = await cg.get_variable(config[CONF_ID])
+    action = cg.new_Pvariable(action_id, template_arg, var)
+    
+    template_ = await cg.templatable(config["light_id"], args, cg.uint32)
+    cg.add(action.set_light_id(template_))
+    
+    return action

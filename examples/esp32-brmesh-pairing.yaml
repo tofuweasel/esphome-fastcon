@@ -1,0 +1,146 @@
+# ESPHome BRMesh Bridge with Native Pairing
+# This configuration adds pairing support to control BRMesh lights
+
+substitutions:
+  device_name: esp-ble-bridge
+  friendly_name: "ESP BLE Bridge"
+  mesh_key: "30323336"  # Default mesh key: "0236" in ASCII hex
+
+esphome:
+  name: ${device_name}
+  platform: ESP32
+  board: esp32dev
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  password: ""
+
+# Enable OTA updates
+ota:
+  password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # Enable fallback hotspot
+  ap:
+    ssid: "${friendly_name} Hotspot"
+    password: "12345678"
+
+# Enable web server for debugging
+web_server:
+  port: 80
+
+# BLE Tracker for scanning
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+# Fastcon controller for BRMesh protocol
+fastcon_controller:
+  id: controller
+  mesh_key: ${mesh_key}
+  adv_interval_min: 0x20
+  adv_interval_max: 0x40
+  adv_duration: 50ms
+  adv_gap: 10ms
+
+# Pairing mode switch
+switch:
+  - platform: template
+    name: "${friendly_name} Pairing Mode"
+    id: pairing_mode
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - logger.log:
+          format: "🔗 PAIRING MODE ENABLED"
+          level: INFO
+      - logger.log:
+          format: "Factory reset your BRMesh light now (5-10 rapid on/off cycles)"
+          level: INFO
+    on_turn_off:
+      - logger.log:
+          format: "🔒 PAIRING MODE DISABLED"
+          level: INFO
+
+# Buttons for pairing operations
+button:
+  - platform: template
+    name: "${friendly_name} Pair Light ID 1"
+    on_press:
+      - logger.log: "Sending pairing command for Light ID 1..."
+      - fastcon.pair_device:
+          light_id: 1
+          group_id: 1
+      - logger.log: "Pairing command sent! Light should stop blinking."
+
+  - platform: template
+    name: "${friendly_name} Pair Light ID 2"
+    on_press:
+      - logger.log: "Sending pairing command for Light ID 2..."
+      - fastcon.pair_device:
+          light_id: 2
+          group_id: 1
+      - logger.log: "Pairing command sent! Light should stop blinking."
+
+  - platform: template
+    name: "${friendly_name} Pair Light ID 3"
+    on_press:
+      - logger.log: "Sending pairing command for Light ID 3..."
+      - fastcon.pair_device:
+          light_id: 3
+          group_id: 1
+      - logger.log: "Pairing command sent! Light should stop blinking."
+
+  - platform: template
+    name: "${friendly_name} Factory Reset Light 1"
+    on_press:
+      - logger.log: "Sending factory reset to Light 1..."
+      - fastcon.factory_reset:
+          light_id: 1
+      - logger.log: "Factory reset sent! Light will start blinking rapidly."
+
+# Example lights (add after pairing)
+light:
+  - platform: fastcon
+    id: light_1
+    name: "${friendly_name} Light 1"
+    light_id: 1
+    fastcon_controller_id: controller
+    
+  - platform: fastcon
+    id: light_2
+    name: "${friendly_name} Light 2"
+    light_id: 2
+    fastcon_controller_id: controller
+    
+  - platform: fastcon
+    id: light_3
+    name: "${friendly_name} Light 3"
+    light_id: 3
+    fastcon_controller_id: controller
+
+# Text sensor to show pairing instructions
+text_sensor:
+  - platform: template
+    name: "${friendly_name} Pairing Instructions"
+    id: pairing_instructions
+    lambda: |-
+      if (id(pairing_mode).state) {
+        return {"🔗 PAIRING MODE ACTIVE\n"
+                "1. Factory reset your light (5-10 rapid on/off)\n"
+                "2. Light will blink rapidly\n"
+                "3. Press 'Pair Light ID X' button\n"
+                "4. Light should stop blinking when paired"};
+      } else {
+        return {"Ready - Enable pairing mode to add lights"};
+      }
+    update_interval: 2s

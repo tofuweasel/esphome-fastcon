@@ -265,5 +265,58 @@ namespace esphome
             std::vector<uint8_t> addr = {DEFAULT_BLE_FASTCON_ADDRESS.begin(), DEFAULT_BLE_FASTCON_ADDRESS.end()};
             return prepare_payload(addr, body);
         }
+
+        void FastconController::pair_device(uint32_t new_light_id, uint32_t group_id)
+        {
+            // Pairing response structure (12 bytes):
+            // Bytes 0-5: Device MAC (reversed) - NOT AVAILABLE IN MESH MODE
+            // Byte 6: Device address (low byte)
+            // Byte 7: Constant (0x01)
+            // Bytes 8-11: Mesh key
+            //
+            // CRITICAL: We can't provide MAC address since we never connect to device
+            // The device in pairing mode only advertises (16-byte manufacturer data)
+            // Pairing must happen through mesh with device ID assignment
+            
+            ESP_LOGI(TAG, "Attempting to pair device as Light ID %d (Group %d)", new_light_id, group_id);
+            
+            // Build pairing command
+            // Command type 2 = pairing response broadcast
+            std::vector<uint8_t> pairing_data(12);
+            
+            // Bytes 0-5: Zero MAC (we don't have it in mesh-only pairing)
+            // The device will use its own MAC when it receives this
+            memset(&pairing_data[0], 0, 6);
+            
+            // Byte 6: Device address
+            pairing_data[6] = new_light_id & 0xFF;
+            
+            // Byte 7: Constant (pairing marker)
+            pairing_data[7] = 0x01;
+            
+            // Bytes 8-11: Mesh key
+            memcpy(&pairing_data[8], this->mesh_key_.data(), 4);
+            
+            // Create mesh packet and queue it
+            // Use broadcast address 0xFFFF to reach all devices including unpaired ones
+            std::vector<uint8_t> mesh_packet = generate_command(2, 0xFFFF, pairing_data, true);
+            queueCommand(0xFFFF, mesh_packet);
+            
+            ESP_LOGI(TAG, "Pairing command queued for broadcast");
+        }
+
+        void FastconController::factory_reset_device(uint32_t light_id)
+        {
+            ESP_LOGI(TAG, "Sending factory reset to Light ID %d", light_id);
+            
+            // Factory reset command: all zeros payload
+            std::vector<uint8_t> reset_data(7, 0x00);
+            
+            // Send reset command
+            std::vector<uint8_t> mesh_packet = generate_command(5, light_id, reset_data, true);
+            queueCommand(light_id, mesh_packet);
+            
+            ESP_LOGI(TAG, "Factory reset command queued");
+        }
     } // namespace fastcon
 } // namespace esphome

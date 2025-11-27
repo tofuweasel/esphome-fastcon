@@ -4,6 +4,7 @@
 #include <mutex>
 #include <vector>
 #include "esphome/core/component.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/esp32_ble_server/ble_server.h"
 #include "esphome/components/light/light_state.h"
 
@@ -51,6 +52,10 @@ namespace esphome
             void set_adv_duration(uint16_t val) { adv_duration_ = val; }
             void set_adv_gap(uint16_t val) { adv_gap_ = val; }
 
+            // Pairing commands
+            void pair_device(uint32_t new_light_id, uint32_t group_id = 1);
+            void factory_reset_device(uint32_t light_id);
+
         protected:
             struct Command
             {
@@ -85,6 +90,45 @@ namespace esphome
             uint16_t adv_gap_{10};
 
             static const uint16_t MANUFACTURER_DATA_ID = 0xfff0;
+        };
+
+        // Actions
+        template<typename... Ts>
+        class PairDeviceAction : public Action<Ts...>
+        {
+        public:
+            PairDeviceAction(FastconController *controller) : controller_(controller) {}
+
+            TEMPLATABLE_VALUE(uint32_t, light_id)
+            TEMPLATABLE_VALUE(uint32_t, group_id)
+
+            void play(Ts... x) override
+            {
+                uint32_t light_id = this->light_id_.value(x...);
+                uint32_t group_id = this->group_id_.value(x...);
+                this->controller_->pair_device(light_id, group_id);
+            }
+
+        protected:
+            FastconController *controller_;
+        };
+
+        template<typename... Ts>
+        class FactoryResetAction : public Action<Ts...>
+        {
+        public:
+            FactoryResetAction(FastconController *controller) : controller_(controller) {}
+
+            TEMPLATABLE_VALUE(uint32_t, light_id)
+
+            void play(Ts... x) override
+            {
+                uint32_t light_id = this->light_id_.value(x...);
+                this->controller_->factory_reset_device(light_id);
+            }
+
+        protected:
+            FastconController *controller_;
         };
 
     } // namespace fastcon

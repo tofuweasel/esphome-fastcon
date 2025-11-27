@@ -1,0 +1,140 @@
+# ESPHome Fastcon BLE Light Component
+
+This is a custom component for ESPHome that allows you to control Broadlink Fastcon BLE lights, also known as brMesh. It should work with any light that can be controlled by brMesh or Broadlink BLE mobile apps.
+
+Be warned - there is also a brLight app, which might look like brMesh, but the protocol is different.
+
+## ⚡ Optimized Branch
+
+**This fork includes command optimization** that reduces BLE command spam by 66%!
+
+The `optimized` branch adds:
+- **Command deduplication** - Skips identical consecutive commands
+- **Debouncing (100ms)** - Waits for state changes to settle before sending
+- **Minimum interval (300ms)** - Prevents flooding the BLE queue
+
+**Performance improvement:**
+- Turning off 3 lights: 9 commands → **3 commands** ✅
+- Brightness slider: 10+ commands → **1-2 commands** ✅
+- Color changes: 2-3 commands → **1 command** ✅
+
+See the [OPTIMIZATION.md](OPTIMIZATION.md) file for technical details.
+
+### 🔗 Companion Home Assistant Addon
+
+This fork is designed to work seamlessly with the **[BRMesh Bridge Home Assistant Addon](https://github.com/tofuweasel/ha-brmesh-bridge)**, which:
+- Auto-generates ESPHome configs using the optimized fork
+- Provides web UI for light management
+- Supports native pairing (no phone app needed)
+- Includes scene and effect management
+- Offers multi-controller mesh support
+
+**Installation:** Add `https://github.com/tofuweasel/ha-brmesh-bridge` to your Home Assistant addon repositories.
+
+## Requirements
+
+- ESP32 board
+- ESPHome 2023.12.0 or newer
+
+## Supported Features
+
+- On/Off control
+- Brightness control
+- RGB color control
+- White mode
+- **Command optimization** (optimized branch only)
+
+## Configuration
+
+Add the following to your ESPHome configuration:
+
+```yaml
+# ESP32 is required
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+esp32_ble_tracker:
+esp32_ble_server:
+
+# Source configuration
+# Use optimized branch for 66% fewer BLE commands:
+external_components:
+  - source: github://tofuweasel/esphome-fastcon@optimized
+    components: [fastcon]
+
+# Or use original:
+# - source: github://dennispg/esphome-fastcon@main
+
+# Controller configuration
+fastcon:
+  mesh_key: "12345678"    # Your mesh key in hex format
+
+  # Optional parameters to control the advertisdement protocol with their defaults:
+  adv_interval_min: 0x20  # Minimum advertisement interval
+  adv_interval_max: 0x40  # Maximum advertisement interval
+  adv_duration: 50        # Advertisement duration in milliseconds
+  adv_gap: 10             # Gap between advertisements in milliseconds
+  max_queue_size: 100     # Maximum number of queued commands
+
+# Light configuration (add an entry for each light)
+light:
+  - platform: fastcon
+    id: living_room_light
+    name: "Living Room Light"
+    light_id: 1           # ID of the light (1-255)
+```
+
+### Configuration Variables
+
+#### Fastcon Controller
+
+- **mesh_key** (*Required*, string): The mesh key for your Fastcon lights in hexadecimal format (8 characters/4 bytes)
+- **id** (*Optional*, ID): The ID to use for this controller component. Defaults to "fastcon_controller"
+- **adv_interval_min** (*Optional*, int): Minimum advertisement interval. Defaults to 0x20
+- **adv_interval_max** (*Optional*, int): Maximum advertisement interval. Defaults to 0x40
+- **adv_duration** (*Optional*, int): Duration of each advertisement in milliseconds. Defaults to 50
+- **adv_gap** (*Optional*, int): Gap between advertisements in milliseconds. Defaults to 10
+- **max_queue_size** (*Optional*, int): Maximum number of commands that can be queued. Defaults to 100
+
+#### Fastcon Light
+
+- **light_id** (*Required*, int): The ID of the light (1-255)
+- **name** (*Required*, string): The name for the light entity
+- **id** (*Optional*, ID): The ID to use for this light component
+- **controller_id** (*Optional*, ID): The ID of the controller to use. Defaults to "fastcon_controller"
+
+## Finding Your Mesh Key
+
+The mesh key is crucial for controlling your Fastcon BLE lights. To find your light's mesh key, you first need to setup your devices using an Android device. The app generates a unique mesh key that will be used with all lights that are set up in the app.
+
+Once the lights are setup, you can use ADB to connect to your phone and you may use the following command to extract the mesh key.
+
+```bash
+adb logcat | { grep -m 1 -o 'jyq_helper: .* payload:.\{24\},[[:space:]]*key:[[:space:]]*.\{8\}' | awk '{print $NF}'; kill -2 $(pgrep -P $$ adb); }
+```
+
+While running the above, open the app and toggle a light on and off. The command should then output your mesh key.
+
+## Acknowledgments
+
+This component builds upon the reverse engineering and hard work of several others who must be acknowledged and thanked:
+
+### Protocol Reverse Engineering
+
+The foundational protocol reverse engineering work was done by [Mooody](https://mooody.me/posts/2023-04/reverse-the-fastcon-ble-protocol/), who provided detailed analysis of the Fastcon BLE protocol, including packet structure and encryption methods. https://mooody.me/posts/2023-04/reverse-the-fastcon-ble-protocol/
+
+### Implementation References
+
+- [ArcadeMachinist's brMeshMQTT](https://github.com/ArcadeMachinist/brMeshMQTT) - This work was crucial in helping me understand the practical implementation details of the protocol. https://github.com/ArcadeMachinist/brMeshMQTT
+
+### Community Resources
+
+- [Home Assistant Community Thread](https://community.home-assistant.io/t/brmesh-app-bluetooth-lights/473486/102)
+
+This ESPHome component adapts and/or takes heavy inspiration from all of these works to run directly on ESP32 devices, allowing for native integration with Home Assistant without requiring additional bridges or MQTT brokers. A huge thank you to all those who contributed to my understanding of the Fastcon BLE protocol.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
