@@ -23,6 +23,9 @@ namespace esphome
 
             std::vector<uint8_t> get_light_data(light::LightState *state);
             std::vector<uint8_t> single_control(uint32_t addr, const std::vector<uint8_t> &light_data);
+            
+            // Send raw command (for custom effects like music mode)
+            void send_raw_command(uint32_t light_id, const std::vector<uint8_t> &data);
 
             void queueCommand(uint32_t light_id_, const std::vector<uint8_t> &data);
 

@@ -220,6 +220,13 @@ namespace esphome
             return this->generate_command(5, light_id_, result_data, true);
         }
 
+        void FastconController::send_raw_command(uint32_t light_id, const std::vector<uint8_t> &data)
+        {
+            // Generate mesh packet with command type 5 (control)
+            std::vector<uint8_t> mesh_packet = generate_command(5, light_id, data, true);
+            queueCommand(light_id, mesh_packet);
+        }
+
         std::vector<uint8_t> FastconController::generate_command(uint8_t n, uint32_t light_id_, const std::vector<uint8_t> &data, bool forward)
         {
             static uint8_t sequence = 0;
