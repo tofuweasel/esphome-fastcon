@@ -48,6 +48,118 @@ namespace esphome
         {
             const uint32_t now = millis();
 
+            // Handle pairing mode - this takes priority over normal operations
+            if (pairing_mode_)
+            {
+                uint32_t elapsed = now - pairing_start_time_;
+                
+                // Phase transition: Discovery (4s) -> Pairing (continues until timeout)
+                if (pairing_phase_ == PairingPhase::DISCOVERY && elapsed >= 4000)
+                {
+                    ESP_LOGI(TAG, "Discovery phase complete - switching to PAIRING phase");
+                    ESP_LOGI(TAG, "Will now broadcast pairing packets with Light ID %d", pairing_light_id_);
+                    pairing_phase_ = PairingPhase::PAIRING;
+                    pairing_phase_start_ = now;  // Track when we entered pairing phase
+                    // Force new advertisement by resetting state
+                    esp_ble_gap_stop_advertising();
+                    adv_state_ = AdvertiseState::IDLE;
+                }
+                
+                // Auto-increment Light ID every 5 seconds during pairing phase
+                if (pairing_phase_ == PairingPhase::PAIRING)
+                {
+                    uint32_t phase_elapsed = now - pairing_phase_start_;
+                    uint32_t current_light_slot = phase_elapsed / 5000;
+                    uint32_t new_light_id = pairing_light_id_ + current_light_slot;
+                    
+                    // Check if we've moved to a new Light ID slot
+                    if (new_light_id != pairing_light_id_)
+                    {
+                        pairing_light_id_ = new_light_id;
+                        ESP_LOGI(TAG, "Auto-incrementing to Light ID %d", pairing_light_id_);
+                        sequence_counter_ = 0x50;  // Reset sequence for new Light ID
+                        esp_ble_gap_stop_advertising();
+                        adv_state_ = AdvertiseState::IDLE;
+                    }
+                }
+                
+                // Exit pairing mode after 60 seconds total
+                if (elapsed >= 60000)
+                {
+                    ESP_LOGI(TAG, "Pairing timeout (60s) - exiting pairing mode");
+                    pairing_mode_ = false;
+                    esp_ble_gap_stop_advertising();
+                    adv_state_ = AdvertiseState::IDLE;
+                    
+                    // Restart BLE scanning
+                    ESP_LOGI(TAG, "Restarting BLE scanner");
+                    esp_ble_gap_start_scanning(300);  // Resume scanning
+                    return;
+                }
+                
+                // Continuously advertise during pairing mode
+                if (adv_state_ == AdvertiseState::IDLE || 
+                    (adv_state_ == AdvertiseState::ADVERTISING && (now - state_start_time_ >= 100)))
+                {
+                    // Stop previous advertisement if any
+                    if (adv_state_ == AdvertiseState::ADVERTISING)
+                    {
+                        esp_ble_gap_stop_advertising();
+                    }
+                    
+                    // Build the appropriate advertisement based on phase
+                    std::vector<uint8_t> adv_data;
+                    if (pairing_phase_ == PairingPhase::DISCOVERY)
+                    {
+                        adv_data = build_discovery_advertisement();
+                        ESP_LOGD(TAG, "Broadcasting discovery advertisement (0x4e)");
+                    }
+                    else
+                    {
+                        adv_data = build_pairing_advertisement();
+                        ESP_LOGD(TAG, "Broadcasting pairing advertisement (0x6e) with Light ID %d", pairing_light_id_);
+                    }
+                    
+                    // Configure BLE advertisement parameters for rapid pairing broadcasts
+                    esp_ble_adv_params_t adv_params = {
+                        .adv_int_min = 0x20,  // 20ms minimum
+                        .adv_int_max = 0x40,  // 40ms maximum - very fast for pairing
+                        .adv_type = ADV_TYPE_NONCONN_IND,
+                        .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
+                        .peer_addr = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+                        .peer_addr_type = BLE_ADDR_TYPE_PUBLIC,
+                        .channel_map = ADV_CHNL_ALL,
+                        .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
+                    };
+                    
+                    // Set the raw advertisement data (skip MAC bytes, start from AD flags)
+                    uint8_t adv_data_raw[31] = {0};
+                    size_t copy_len = std::min(adv_data.size() - 6, (size_t)25);  // Skip 6-byte MAC, limit to 25
+                    memcpy(adv_data_raw, adv_data.data() + 6, copy_len);
+                    
+                    esp_err_t err = esp_ble_gap_config_adv_data_raw(adv_data_raw, copy_len);
+                    if (err != ESP_OK)
+                    {
+                        ESP_LOGW(TAG, "Error setting pairing advertisement data: %s", esp_err_to_name(err));
+                        return;
+                    }
+                    
+                    err = esp_ble_gap_start_advertising(&adv_params);
+                    if (err != ESP_OK)
+                    {
+                        ESP_LOGW(TAG, "Error starting pairing advertisement: %s", esp_err_to_name(err));
+                        return;
+                    }
+                    
+                    adv_state_ = AdvertiseState::ADVERTISING;
+                    state_start_time_ = now;
+                }
+                
+                // Keep advertising during pairing mode
+                return;
+            }
+
+            // Normal operation - handle advertisement state machine
             switch (adv_state_)
             {
             case AdvertiseState::IDLE:
@@ -275,41 +387,35 @@ namespace esphome
 
         void FastconController::pair_device(uint32_t new_light_id, uint32_t group_id)
         {
-            // Pairing response structure (12 bytes):
-            // Bytes 0-5: Device MAC (reversed) - NOT AVAILABLE IN MESH MODE
-            // Byte 6: Device address (low byte)
-            // Byte 7: Constant (0x01)
-            // Bytes 8-11: Mesh key
+            // NEW PAIRING PROTOCOL DISCOVERED FROM BLE CAPTURE:
+            // The phone/controller advertises with fake MAC 11:22:33:44:55:66
+            // and sends the mesh key in a raw BLE advertisement packet.
+            // This is NOT a mesh command - it's a pure BLE advertisement!
             //
-            // CRITICAL: We can't provide MAC address since we never connect to device
-            // The device in pairing mode only advertises (16-byte manufacturer data)
-            // Pairing must happen through mesh with device ID assignment
+            // Two-phase process:
+            // 1. Discovery phase (~4 seconds): Command byte 0x4e
+            // 2. Pairing phase (~0.3 seconds): Command byte 0x6e with mesh key
             
-            ESP_LOGI(TAG, "Attempting to pair device as Light ID %d (Group %d)", new_light_id, group_id);
+            ESP_LOGI(TAG, "=== Starting BLE Pairing Mode for Light ID %d (Group %d) ===", new_light_id, group_id);
+            ESP_LOGI(TAG, "This will broadcast pairing advertisements for 60 seconds");
+            ESP_LOGI(TAG, "Make sure your light is in factory reset / pairing mode!");
             
-            // Build pairing command
-            // Command type 2 = pairing response broadcast
-            std::vector<uint8_t> pairing_data(12);
+            // CRITICAL: Stop BLE scanning - it blocks advertisements!
+            ESP_LOGI(TAG, "Stopping BLE scanner to enable pairing advertisements");
+            esp_ble_gap_stop_scanning();
             
-            // Bytes 0-5: Zero MAC (we don't have it in mesh-only pairing)
-            // The device will use its own MAC when it receives this
-            memset(&pairing_data[0], 0, 6);
+            // Stop any existing advertisements and reset state
+            esp_ble_gap_stop_advertising();
             
-            // Byte 6: Device address
-            pairing_data[6] = new_light_id & 0xFF;
+            // Store pairing state
+            pairing_mode_ = true;
+            pairing_start_time_ = millis();
+            pairing_light_id_ = new_light_id;
+            pairing_phase_ = PairingPhase::DISCOVERY;
+            adv_state_ = AdvertiseState::IDLE;  // CRITICAL: Initialize state for pairing
             
-            // Byte 7: Constant (pairing marker)
-            pairing_data[7] = 0x01;
-            
-            // Bytes 8-11: Mesh key
-            memcpy(&pairing_data[8], this->mesh_key_.data(), 4);
-            
-            // Create mesh packet and queue it
-            // Use broadcast address 0xFFFF to reach all devices including unpaired ones
-            std::vector<uint8_t> mesh_packet = generate_command(2, 0xFFFF, pairing_data, true);
-            queueCommand(0xFFFF, mesh_packet);
-            
-            ESP_LOGI(TAG, "Pairing command queued for broadcast");
+            // We'll handle the actual advertisement in loop()
+            ESP_LOGI(TAG, "Pairing mode activated - entering DISCOVERY phase");
         }
 
         void FastconController::factory_reset_device(uint32_t light_id)
@@ -324,6 +430,136 @@ namespace esphome
             queueCommand(light_id, mesh_packet);
             
             ESP_LOGI(TAG, "Factory reset command queued");
+        }
+
+        std::vector<uint8_t> FastconController::build_discovery_advertisement()
+        {
+            // Discovery phase advertisement (command 0x4e)
+            // Example from capture: 66554433221102011a13fff0ff4e6c5a05348e89b5e238a1a85e367bc4e9974d
+            
+            std::vector<uint8_t> adv_data;
+            
+            // MAC Address (reversed): 11:22:33:44:55:66 -> 66 55 44 33 22 11
+            adv_data.insert(adv_data.end(), {0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+            
+            // AD Flags structure
+            adv_data.insert(adv_data.end(), {0x02, 0x01, 0x1a});
+            
+            // Manufacturer Specific Data structure
+            adv_data.push_back(0x13);  // Length: 19 bytes
+            adv_data.push_back(0xff);  // Type: Manufacturer Specific
+            adv_data.push_back(0xf0);  // Company ID: 0xf0ff (little-endian)
+            adv_data.push_back(0xff);
+            
+            // Command byte for discovery
+            adv_data.push_back(0x4e);  // 'N' - discovery mode
+            
+            // Variable data (7 bytes) - using random values for now
+            // These appear to change between packets in the capture
+            static uint8_t counter = 0;
+            adv_data.insert(adv_data.end(), {
+                static_cast<uint8_t>(0x6c + (counter % 4)),
+                static_cast<uint8_t>(0x5a + (counter % 8)),
+                static_cast<uint8_t>(counter % 8),
+                0x34, 0x8e, 0x89, 0xb5
+            });
+            counter++;
+            
+            // Placeholder for remaining bytes (we'll improve this later)
+            adv_data.insert(adv_data.end(), {0xe2, 0x38, 0xa1, 0xa8, 0x5e, 0x36, 0x7b, 0xc4});
+            
+            // CRC (3 bytes) - placeholder for now
+            adv_data.insert(adv_data.end(), {0xe9, 0x97, 0x4d});
+            
+            return adv_data;
+        }
+
+        std::vector<uint8_t> FastconController::build_pairing_advertisement()
+        {
+            // Pairing phase advertisement (command 0x6e) with mesh key
+            // Example: 66554433221102011a13fff0ff6e50596344103332340a3939303233367cb212
+            // Decoded: nPYcD.324.990236|..
+            
+            std::vector<uint8_t> adv_data;
+            
+            // MAC Address (reversed): 11:22:33:44:55:66 -> 66 55 44 33 22 11
+            adv_data.insert(adv_data.end(), {0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+            
+            // AD Flags structure
+            adv_data.insert(adv_data.end(), {0x02, 0x01, 0x1a});
+            
+            // Manufacturer Specific Data structure
+            adv_data.push_back(0x13);  // Length: 19 bytes
+            adv_data.push_back(0xff);  // Type: Manufacturer Specific
+            adv_data.push_back(0xf0);  // Company ID: 0xf0ff (little-endian)
+            adv_data.push_back(0xff);
+            
+            // Command byte for pairing
+            adv_data.push_back(0x6e);  // 'n' - pairing mode
+            
+            // Sequence counter (increments with each packet)
+            static uint8_t pairing_counter = 0x50;
+            adv_data.push_back(pairing_counter++);
+            
+            // CRITICAL: Light ID assignment (16-bit little-endian at bytes 2-3)
+            // Based on brmesh-pairing.yaml: uint16_t light_id = (mfg_data[7] << 8) | mfg_data[6]
+            // In full packet that's offsets 13+6=19 and 13+7=20, so mfg_data[6-7]
+            // Here in mfg_data it's positions 2-3 after command+counter
+            ESP_LOGD(TAG, "Including Light ID %d (0x%04x) in pairing packet", pairing_light_id_, pairing_light_id_);
+            adv_data.push_back(static_cast<uint8_t>(pairing_light_id_ & 0xFF));        // Low byte
+            adv_data.push_back(static_cast<uint8_t>((pairing_light_id_ >> 8) & 0xFF)); // High byte
+            
+            // Variable data (4 bytes) - pattern observed in captures
+            adv_data.insert(adv_data.end(), {
+                0x44,
+                0x10,
+                0x33,
+                0x32
+            });
+            
+            // Sequence: "34\n" (0x34, 0x0a)
+            adv_data.insert(adv_data.end(), {0x34, 0x0a});
+            
+            // Mesh key in ASCII format: "99" + hex_as_ascii
+            // For mesh key 0x30323336 ("0236"), send "990236"
+            adv_data.insert(adv_data.end(), {'9', '9'});  // Prefix
+            
+            // Convert mesh key bytes to ASCII hex representation
+            for (int i = 0; i < 4; i++) {
+                adv_data.push_back(mesh_key_[i]);  // Already ASCII: 0x30='0', 0x32='2', 0x33='3', 0x36='6'
+            }
+            
+            // CRC (3 bytes) - calculate based on payload
+            uint32_t crc = calculate_pairing_crc(adv_data);
+            adv_data.push_back((crc >> 16) & 0xFF);
+            adv_data.push_back((crc >> 8) & 0xFF);
+            adv_data.push_back(crc & 0xFF);
+            
+            std::vector<uint8_t> payload_subset(adv_data.begin() + 9, adv_data.end());
+            std::vector<char> hex_chars = vector_to_hex_string(payload_subset);
+            ESP_LOGD(TAG, "Pairing advertisement payload: %s", hex_chars.data());
+            
+            return adv_data;
+        }
+
+        uint32_t FastconController::calculate_pairing_crc(const std::vector<uint8_t> &data)
+        {
+            // CRC calculation - this is a placeholder
+            // We need to reverse-engineer the actual algorithm from the captures
+            // For now, return a simple checksum-based value
+            
+            uint32_t sum = 0;
+            for (size_t i = 13; i < data.size(); i++) {  // Start after manufacturer header
+                sum += data[i];
+            }
+            
+            // Simple transformation to get 3 bytes
+            uint32_t crc = (sum * 0x1234) & 0xFFFFFF;
+            
+            // TODO: Analyze multiple captures to determine the real CRC algorithm
+            ESP_LOGV(TAG, "CRC calculated: 0x%06X (placeholder algorithm)", crc);
+            
+            return crc;
         }
     } // namespace fastcon
 } // namespace esphome

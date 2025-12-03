@@ -58,6 +58,11 @@ namespace esphome
             // Pairing commands
             void pair_device(uint32_t new_light_id, uint32_t group_id = 1);
             void factory_reset_device(uint32_t light_id);
+            
+            // Pairing advertisement helpers
+            std::vector<uint8_t> build_discovery_advertisement();
+            std::vector<uint8_t> build_pairing_advertisement();
+            uint32_t calculate_pairing_crc(const std::vector<uint8_t> &data);
 
         protected:
             struct Command
@@ -79,8 +84,22 @@ namespace esphome
                 GAP
             };
 
+            enum class PairingPhase
+            {
+                DISCOVERY,  // Send 0x4e packets - discovering lights
+                PAIRING     // Send 0x6e packets - sending mesh key
+            };
+
             AdvertiseState adv_state_{AdvertiseState::IDLE};
             uint32_t state_start_time_{0};
+            
+            // Pairing mode state
+            bool pairing_mode_{false};
+            uint32_t pairing_start_time_{0};
+            uint32_t pairing_light_id_{1};
+            uint32_t pairing_phase_start_{0};  // When we entered the current phase
+            PairingPhase pairing_phase_{PairingPhase::DISCOVERY};
+            uint8_t sequence_counter_{0x50};  // Pairing sequence counter
 
             // Protocol implementation
             std::vector<uint8_t> generate_command(uint8_t n, uint32_t light_id_, const std::vector<uint8_t> &data, bool forward = true);
