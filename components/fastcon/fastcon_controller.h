@@ -97,6 +97,7 @@ namespace esphome
             bool pairing_mode_{false};
             uint32_t pairing_start_time_{0};
             uint32_t pairing_light_id_{1};
+            uint32_t pairing_base_light_id_{1};  // Original starting light ID for calculating increments
             uint32_t pairing_phase_start_{0};  // When we entered the current phase
             PairingPhase pairing_phase_{PairingPhase::DISCOVERY};
             uint8_t sequence_counter_{0x50};  // Pairing sequence counter

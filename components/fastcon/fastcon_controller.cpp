@@ -70,7 +70,7 @@ namespace esphome
                 {
                     uint32_t phase_elapsed = now - pairing_phase_start_;
                     uint32_t current_light_slot = phase_elapsed / 5000;
-                    uint32_t new_light_id = pairing_light_id_ + current_light_slot;
+                    uint32_t new_light_id = pairing_base_light_id_ + current_light_slot;  // Calculate from base ID
                     
                     // Check if we've moved to a new Light ID slot
                     if (new_light_id != pairing_light_id_)
@@ -411,6 +411,7 @@ namespace esphome
             pairing_mode_ = true;
             pairing_start_time_ = millis();
             pairing_light_id_ = new_light_id;
+            pairing_base_light_id_ = new_light_id;  // Remember starting ID
             pairing_phase_ = PairingPhase::DISCOVERY;
             adv_state_ = AdvertiseState::IDLE;  // CRITICAL: Initialize state for pairing
             
